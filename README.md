@@ -1,3 +1,14 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/header-dark.png">
+    <img alt="bootwatchd: the server behind boot.watch" src=".github/assets/header-light.png" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/omaboot/bootwatchd/tags"><img alt="Release" src="https://img.shields.io/github/v/tag/omaboot/bootwatchd?label=release&sort=semver"></a>
+</p>
+
 # bootwatchd
 
 boot.watch's server. OmaBoot? Live's Wi-Fi and Ethernet checks move their test data through it
