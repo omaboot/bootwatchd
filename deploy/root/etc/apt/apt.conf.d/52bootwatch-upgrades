@@ -1,0 +1,6 @@
+// Security updates install daily; reboot at 09:30 UTC when a kernel update needs it: half an
+// hour after the server that watches this one (bootwatcherd), so the two never reboot in the
+// same minutes.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "09:30";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";

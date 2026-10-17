@@ -1,0 +1,30 @@
+# Cloudflare Tunnel (remotely managed): dials out to Cloudflare and forwards boot.watch/v1/*
+# to bootwatchd on 127.0.0.1:8470. The tunnel token is in /etc/bootwatch/tunnel.env
+# (TUNNEL_TOKEN=...), written by deploy/cloudflare.sh.
+[Unit]
+Description=Cloudflare Tunnel for boot.watch
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/bootwatch/tunnel.env
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/bootwatch/tunnel.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+[Unit]
+Description=bootwatchd: boot.watch's test endpoints (no request log, no addresses)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Development: plain HTTP on :8470. Production adds production.conf as a drop-in.
+ExecStart=/usr/local/bin/bootwatchd -listen :8470
+Restart=on-failure
+RestartSec=2
+
+DynamicUser=yes
+# today's byte count only (the day file), so a restart doesn't reset the daily cap
+StateDirectory=bootwatchd
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#cloud-config
+# First boot of a bootwatch droplet: an admin login with sudo, no root or password logins.
+# deploy/provision.sh fills in ADMIN_USER and ADMIN_KEY.
+users:
+  - name: ADMIN_USER
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ADMIN_KEY
+disable_root: true
+ssh_pwauth: false
+package_update: true
+package_upgrade: true
+timezone: Etc/UTC
