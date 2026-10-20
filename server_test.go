@@ -264,6 +264,13 @@ func TestBugreport(t *testing.T) {
 	if w := send(good, key, mac); w.Code != http.StatusTooManyRequests {
 		t.Errorf("second from the same Mac today: %d", w.Code)
 	}
+	hw := httptest.NewRecorder()
+	s.ServeHTTP(hw, httptest.NewRequest(http.MethodGet, healthPath, nil))
+	var h health
+	json.Unmarshal(hw.Body.Bytes(), &h)
+	if h.Bugs != 1 || h.BugsToday != 1 || h.BugsPerDay != 10 {
+		t.Errorf("health: bugs %d, today %d of %d", h.Bugs, h.BugsToday, h.BugsPerDay)
+	}
 }
 
 // A PUT R2 refuses is tried once more over IPv4; when both fail, the error says why, in R2's words.

@@ -31,7 +31,7 @@ Small and public: anyone can run their own server, and a client in any language 
 | `GET /v1/stream?seed=<32 hex>&n=<bytes>` | The first `n` bytes of the seed's stream, `application/octet-stream`, with `Content-Length`. | `1 ≤ n ≤ 1048576`; 64 MiB an hour per address |
 | `POST /v1/sink?seed=<32 hex>` + body | `{"n": <bytes read>, "match": <leading bytes equal to the seed's stream>}` | `Content-Length` required, ≤ 262144; 16 MiB an hour per address |
 | `POST /v1/bugreport` + tar body | `201` with `{"code": "B-XXXX-XXXX"}`: the bug report is kept under that code. Needs `Authorization: Bearer <upload key>` and `X-OmaBoot-Mac: <64 hex>`. See [Bug reports](#bug-reports). | `Content-Length` ≤ 1048576; 12 an hour per address, 6 a day per Mac, 500 a day in all, 2 at a time |
-| `GET /v1/health` | The counters as JSON (totals since start; bytes today, and `day_bytes_since`, when that count started: midnight UTC, or the server's first start that day) and the server's `version`, for monitoring. | |
+| `GET /v1/health` | The counters as JSON (totals since start; bytes today, and `day_bytes_since`, when that count started: midnight UTC, or the server's first start that day; bug reports kept and not kept, and today's against the daily cap) and the server's `version`, for monitoring. | |
 
 Every answer carries `Cache-Control: no-store, no-transform`. Stream and sink bytes count
 against a global 4 GiB a day (UTC) as well. Over a limit the answer is `429` with `Retry-After`.

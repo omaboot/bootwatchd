@@ -72,7 +72,9 @@ type health struct {
 	Bugs        int64     `json:"bugs"`       // bug reports kept (bugs.go)
 	BugBytes    int64     `json:"bug_bytes"`
 	BugFailed   int64     `json:"bug_failed"` // bug reports the store didn't take
-	DayBytes    int64     `json:"day_bytes"`  // stream and sink bytes today (UTC)
+	BugsToday   int       `json:"bugs_today"` // bug reports taken today (UTC), toward bugs_per_day
+	BugsPerDay  int       `json:"bugs_per_day"`
+	DayBytes    int64     `json:"day_bytes"` // stream and sink bytes today (UTC)
 	DailyBytes  int64     `json:"daily_bytes"`
 	// DayBytesSince is when day_bytes started counting: midnight UTC, or later when the server
 	// started today without a saved count of today's.
@@ -282,6 +284,12 @@ func (s *server) health(w http.ResponseWriter) {
 	h := s.h
 	h.Version, h.Since, h.DayBytes, h.DailyBytes = version, s.started.UTC().Truncate(time.Second), s.dayBytes, s.lim.dailyBytes
 	h.DayBytesSince = s.dayFrom
+	if b := s.bugs; b != nil {
+		if b.day == s.now().UTC().Format(time.DateOnly) {
+			h.BugsToday = b.n
+		}
+		h.BugsPerDay = b.lim.perDay
+	}
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h)
