@@ -38,6 +38,7 @@ type server struct {
 	// header. Only with a firewall that lets nothing but Cloudflare in.
 	cloudflare bool
 	now        func() time.Time
+	bugs       *bugs // the bug report endpoint (bugs.go); nil: not taken here
 
 	mu       sync.Mutex
 	addrs    map[string]*usage
@@ -68,6 +69,9 @@ type health struct {
 	SinkWrong   int64     `json:"sink_wrong"` // uploads that arrived with a wrong byte
 	Limited     int64     `json:"limited"`    // requests turned away by a limit
 	Bad         int64     `json:"bad"`        // malformed requests
+	Bugs        int64     `json:"bugs"`       // bug reports kept (bugs.go)
+	BugBytes    int64     `json:"bug_bytes"`
+	BugFailed   int64     `json:"bug_failed"` // bug reports the store didn't take
 	DayBytes    int64     `json:"day_bytes"`  // stream and sink bytes today (UTC)
 	DailyBytes  int64     `json:"daily_bytes"`
 	// DayBytesSince is when day_bytes started counting: midnight UTC, or later when the server
@@ -165,6 +169,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.sink(w, r)
 	case healthPath:
 		s.health(w)
+	case bugPath:
+		s.bugreport(w, r)
 	default:
 		http.NotFound(w, r)
 	}

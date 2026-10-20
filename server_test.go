@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
 	"crypto/aes"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -198,5 +200,67 @@ func TestDayKept(t *testing.T) {
 	at = at.Add(time.Minute)
 	if h := health(start()); h.DayBytes != 131072 || !h.DayBytesSince.Equal(time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC).Add(5*time.Minute)) {
 		t.Fatalf("next day after a restart: %d bytes since %v", h.DayBytes, h.DayBytesSince)
+	}
+}
+
+// A bug report is kept only with a key and the known files, scrubbed again, under its code; the
+// limits turn the next one away.
+func TestBugreport(t *testing.T) {
+	dir := t.TempDir()
+	key := strings.Repeat("k", 40)
+	s := newServer(defaultLimits, false)
+	s.bugs = newBugs(map[string]string{key: "dev"}, dirStore{dir: dir}, bugLimits{perAddrHour: 10, perMacDay: 1, perDay: 10})
+	mac := strings.Repeat("ab", 32)
+	tarOf := func(files map[string]string) []byte {
+		var b bytes.Buffer
+		tw := tar.NewWriter(&b)
+		for n, body := range files {
+			tw.WriteHeader(&tar.Header{Name: "bugreport-x/" + n, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+			tw.Write([]byte(body))
+		}
+		tw.Close()
+		return b.Bytes()
+	}
+	send := func(body []byte, auth, macID string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, bugPath, bytes.NewReader(body))
+		if auth != "" {
+			r.Header.Set("Authorization", "Bearer "+auth)
+		}
+		r.Header.Set("X-OmaBoot-Mac", macID)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	good := tarOf(map[string]string{"manifest.json": `{"version":"0.9.3 dev"}`, "kernel-log.txt": "wlan0: authenticate with 3c:22:fb:01:02:03\n"})
+	if w := send(good, "", mac); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no key: %d", w.Code)
+	}
+	if w := send(tarOf(map[string]string{"manifest.json": "{}", "secrets.txt": "x"}), key, mac); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "secrets.txt") {
+		t.Fatalf("unknown file: %d %s", w.Code, w.Body)
+	}
+	w := send(good, key, mac)
+	var a bugAnswer
+	json.Unmarshal(w.Body.Bytes(), &a)
+	if w.Code != http.StatusCreated || !regexp.MustCompile(`^B-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$`).MatchString(a.Code) {
+		t.Fatalf("kept: %d %s", w.Code, w.Body)
+	}
+	stored, err := os.ReadFile(filepath.Join(dir, "v1", a.Code+".tar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(bytes.NewReader(stored))
+	names := map[string]string{}
+	for h, err := tr.Next(); err == nil; h, err = tr.Next() {
+		b, _ := io.ReadAll(tr)
+		names[h.Name] = string(b)
+	}
+	if kl := names[a.Code+"/kernel-log.txt"]; strings.Contains(kl, "3c:22:fb") || !strings.Contains(kl, "[redacted]") {
+		t.Errorf("not scrubbed again: %q", kl)
+	}
+	if rc := names[a.Code+"/received.json"]; !strings.Contains(rc, `"key": "dev"`) || strings.Contains(rc, "192.0.2") {
+		t.Errorf("received.json: %q", rc)
+	}
+	if w := send(good, key, mac); w.Code != http.StatusTooManyRequests {
+		t.Errorf("second from the same Mac today: %d", w.Code)
 	}
 }
