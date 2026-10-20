@@ -13,7 +13,8 @@
 
 boot.watch's server. OmaBoot? Live's Wi-Fi and Ethernet checks move their test data through it
 and check every byte, both ways, so a sign-in page, a proxy's error page or a broken adapter
-can't pass for data. Later it also carries the phone relay.
+can't pass for data. It also passes OmaBoot?'s bug reports on to private storage, and later
+carries the phone relay.
 
 It keeps no request log and no addresses on disk. Limits are kept in memory per address and
 forgotten after an hour; the counters are totals only. On disk there's only today's byte count
@@ -29,6 +30,7 @@ Small and public: anyone can run their own server, and a client in any language 
 | `GET /v1/echo?n=<32 hex>` | The nonce, as `text/plain`, exactly as sent (lowercase hex). | 600 a minute per address |
 | `GET /v1/stream?seed=<32 hex>&n=<bytes>` | The first `n` bytes of the seed's stream, `application/octet-stream`, with `Content-Length`. | `1 ≤ n ≤ 1048576`; 64 MiB an hour per address |
 | `POST /v1/sink?seed=<32 hex>` + body | `{"n": <bytes read>, "match": <leading bytes equal to the seed's stream>}` | `Content-Length` required, ≤ 262144; 16 MiB an hour per address |
+| `POST /v1/bugreport` + tar body | `201` with `{"code": "B-XXXX-XXXX"}`: the bug report is kept under that code. Needs `Authorization: Bearer <upload key>` and `X-OmaBoot-Mac: <64 hex>`. See [Bug reports](#bug-reports). | `Content-Length` ≤ 1048576; 12 an hour per address, 6 a day per Mac, 500 a day in all, 2 at a time |
 | `GET /v1/health` | The counters as JSON (totals since start; bytes today, and `day_bytes_since`, when that count started: midnight UTC, or the server's first start that day) and the server's `version`, for monitoring. | |
 
 Every answer carries `Cache-Control: no-store, no-transform`. Stream and sink bytes count
@@ -71,6 +73,27 @@ Over one connection bound to the adapter under test (`SO_BINDTODEVICE`), 15 s at
 
 The adapter's byte counters must have grown by at least what moved. Data verified both ways
 passes. A failure counts against the adapter only when the server was there to answer.
+
+## Bug reports
+
+OmaBoot? Live sends a bug report only when its person asks (`bugreport send` in its console) or
+its run plan says so. It's a tar of the files OmaBoot?'s `bugreport` saves (`full-log.txt`,
+`kernel-log.txt`, `report.json`, `screen.txt`, `boot.txt`, `network-log.txt`, `sleep-log.txt`)
+and a `manifest.json` (OmaBoot?'s version, the model identifier and configuration, the
+DoesItOmarchy report's code when there is one), every file scrubbed on the Mac with
+DoesItOmarchy's rules (`pkg/scrub`: serial numbers, MAC and IP addresses, host and user names,
+e-mail addresses).
+
+bootwatchd checks the upload key (one per kind of image: dev, release), refuses any other file,
+scrubs every file again with the same rules and adds `received.json`: the code, the key's name,
+the day (UTC, no time) and the client's version as it said. Then it passes the report on to the
+store, an R2 bucket (`-bug-store r2:FILE`) or a directory (`dir:PATH`), and keeps nothing of it.
+`X-OmaBoot-Mac` is a hash the Mac makes from its firmware's product UUID with a fixed salt; it's
+only for the per-Mac limit, kept in memory and forgotten at the end of the UTC day. Without
+`-bug-keys` the endpoint answers `404`.
+
+On the droplet, `deploy/bugs.sh` installs the keys and the bucket's write token as systemd
+credentials. The bucket deletes reports after 180 days.
 
 ## Running
 
