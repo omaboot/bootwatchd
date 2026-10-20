@@ -13,7 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -119,7 +122,10 @@ func (b *bugs) keyName(r *http.Request) string {
 	return name
 }
 
-var macHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	macHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	r2Code  = regexp.MustCompile(`<Code>([A-Za-z]{1,64})</Code>`)
+)
 
 // bugAnswer is the answer to a stored report: the code to quote, in an issue for instance.
 type bugAnswer struct {
@@ -182,6 +188,7 @@ func (s *server) bugreport(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if err := b.store.Put(ctx, "v1/"+code+".tar", out); err != nil {
+		log.Printf("bootwatchd: a bug report wasn't kept: %v", err) // the store's error only: nothing about the sender
 		s.giveBackBug(r, mac)
 		s.mu.Lock()
 		s.h.BugFailed++
@@ -340,10 +347,13 @@ func (d dirStore) Put(_ context.Context, name string, body []byte) error {
 }
 
 // r2Store keeps reports in a Cloudflare R2 bucket over its S3 API, with a token that can only
-// reach that bucket: one signed PUT per report.
+// reach that bucket: one signed PUT per report. A PUT that fails is tried once more over IPv4
+// only: the token's IP filter may name only the server's IPv4 address while it reaches R2 over
+// IPv6 (boot.watch's droplet did, 2026-10-20).
 type r2Store struct {
 	account, keyID, secret, bucket string
-	client                         *http.Client
+	endpoint                       string // https://<account>.r2.cloudflarestorage.com, or a test server
+	client, client4                *http.Client
 }
 
 // readR2 reads an R2 env file: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET.
@@ -358,16 +368,42 @@ func readR2(file string) (*r2Store, error) {
 			v[k] = strings.TrimSpace(x)
 		}
 	}
-	s := &r2Store{account: v["R2_ACCOUNT_ID"], keyID: v["R2_ACCESS_KEY_ID"], secret: v["R2_SECRET_ACCESS_KEY"], bucket: v["R2_BUCKET"],
-		client: &http.Client{Timeout: 20 * time.Second}}
+	s := &r2Store{account: v["R2_ACCOUNT_ID"], keyID: v["R2_ACCESS_KEY_ID"], secret: v["R2_SECRET_ACCESS_KEY"], bucket: v["R2_BUCKET"]}
+	s.endpoint = "https://" + s.account + ".r2.cloudflarestorage.com"
+	s.client, s.client4 = r2Clients()
 	if s.account == "" || s.keyID == "" || s.secret == "" || s.bucket == "" {
 		return nil, fmt.Errorf("%s: needs R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET", file)
 	}
 	return s, nil
 }
 
+// r2Clients are the store's HTTP clients: the usual one, and one that dials IPv4 only.
+func r2Clients() (*http.Client, *http.Client) {
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	t4 := http.DefaultTransport.(*http.Transport).Clone()
+	t4.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) { return d.DialContext(ctx, "tcp4", addr) }
+	return &http.Client{Timeout: 20 * time.Second}, &http.Client{Timeout: 20 * time.Second, Transport: t4}
+}
+
 func (s *r2Store) Put(ctx context.Context, name string, body []byte) error {
-	host := s.account + ".r2.cloudflarestorage.com"
+	err := s.put(ctx, s.client, name, body)
+	if err == nil {
+		return nil
+	}
+	if err4 := s.put(ctx, s.client4, name, body); err4 != nil {
+		return fmt.Errorf("%v; over IPv4: %v", err, err4)
+	}
+	log.Printf("bootwatchd: a bug report was kept over IPv4 after: %v (the R2 token's IP filter may lack this server's IPv6 address)", err)
+	return nil
+}
+
+// put is one signed PUT of a report through a client.
+func (s *r2Store) put(ctx context.Context, client *http.Client, name string, body []byte) error {
+	u, err := url.Parse(s.endpoint)
+	if err != nil {
+		return err
+	}
+	host := u.Host
 	p := "/" + s.bucket + "/" + name
 	now := time.Now().UTC()
 	amz, day := now.Format("20060102T150405Z"), now.Format("20060102")
@@ -382,7 +418,7 @@ func (s *r2Store) Put(ctx context.Context, name string, body []byte) error {
 	for _, part := range []string{day, "auto", "s3", "aws4_request"} {
 		k = hmacSHA256(k, part)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "https://"+host+p, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.endpoint+p, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -390,13 +426,16 @@ func (s *r2Store) Put(ctx context.Context, name string, body []byte) error {
 	req.Header.Set("X-Amz-Date", amz)
 	req.Header.Set("X-Amz-Content-Sha256", ph)
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.keyID+"/"+scope+", SignedHeaders="+signed+", Signature="+hex.EncodeToString(hmacSHA256(k, sts)))
-	res, err := s.client.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(res.Body, 4<<10))
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
 	if res.StatusCode != http.StatusOK {
+		if m := r2Code.FindSubmatch(b); m != nil { // R2's own reason, e.g. AccessDenied: nothing about the sender
+			return fmt.Errorf("R2: %s (%s)", res.Status, m[1])
+		}
 		return fmt.Errorf("R2: %s", res.Status)
 	}
 	return nil

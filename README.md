@@ -87,7 +87,10 @@ e-mail addresses).
 bootwatchd checks the upload key (one per kind of image: dev, release), refuses any other file,
 scrubs every file again with the same rules and adds `received.json`: the code, the key's name,
 the day (UTC, no time) and the client's version as it said. Then it passes the report on to the
-store, an R2 bucket (`-bug-store r2:FILE`) or a directory (`dir:PATH`), and keeps nothing of it.
+store, an R2 bucket (`-bug-store r2:FILE`) or a directory (`dir:PATH`), and keeps nothing of it. A PUT
+R2 refuses is tried once more over IPv4 only, since a token's IP filter may name only the
+server's IPv4 address while it reaches R2 over IPv6. When a report can't be kept, the log gets the
+store's error and nothing about the sender.
 `X-OmaBoot-Mac` is a hash the Mac makes from its firmware's product UUID with a fixed salt; it's
 only for the per-Mac limit, kept in memory and forgotten at the end of the UTC day. Without
 `-bug-keys` the endpoint answers `404`.
