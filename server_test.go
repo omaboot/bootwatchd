@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"encoding/hex"
 	"encoding/json"
@@ -262,5 +263,31 @@ func TestBugreport(t *testing.T) {
 	}
 	if w := send(good, key, mac); w.Code != http.StatusTooManyRequests {
 		t.Errorf("second from the same Mac today: %d", w.Code)
+	}
+}
+
+// A PUT R2 refuses is tried once more over IPv4; when both fail, the error says why, in R2's words.
+func TestR2Fallback(t *testing.T) {
+	n := 0
+	refuse := 1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=id/") {
+			t.Errorf("request: %s %s", r.Method, r.Header.Get("Authorization"))
+		}
+		if n <= refuse {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, "<Error><Code>AccessDenied</Code></Error>")
+		}
+	}))
+	defer srv.Close()
+	s := &r2Store{account: "acct", keyID: "id", secret: "secret", bucket: "b", endpoint: srv.URL, client: srv.Client(), client4: srv.Client()}
+	if err := s.Put(context.Background(), "v1/B-TEST-0000.tar", []byte("x")); err != nil || n != 2 {
+		t.Fatalf("kept on the second try: %v after %d", err, n)
+	}
+	n, refuse = 0, 2
+	err := s.Put(context.Background(), "v1/B-TEST-0001.tar", []byte("x"))
+	if err == nil || !strings.Contains(err.Error(), "AccessDenied") || !strings.Contains(err.Error(), "over IPv4") {
+		t.Fatalf("both refused: %v", err)
 	}
 }
