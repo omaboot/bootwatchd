@@ -1,6 +1,13 @@
-// Security updates install daily; reboot at 09:30 UTC when a kernel update needs it: half an
-// hour after the server that watches this one (bootwatcherd), so the two never reboot in the
-// same minutes.
+// Security updates (and cloudflared's) install daily; reboot at 09:30 UTC when a kernel update
+// needs it: half an hour after the server that watches this one (bootwatcherd), so the two never
+// reboot in the same minutes.
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-Time "09:30";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+
+// cloudflared comes from Cloudflare's repository, which the defaults above skip: take its updates
+// too (the tunnel is the only way in). A running cloudflared keeps the old binary until restarted,
+// so restart every running cloudflared* unit whose binary was replaced; the tunnel is back within
+// seconds.
+Unattended-Upgrade::Origins-Pattern { "origin=cloudflared,codename=any"; };
+DPkg::Post-Invoke { "for u in $(systemctl list-units --type=service --state=running --plain --no-legend 'cloudflared*' | cut -d' ' -f1); do p=$(systemctl show -p MainPID --value $u); readlink /proc/$p/exe | grep -q deleted && systemctl restart $u; done; true"; };
